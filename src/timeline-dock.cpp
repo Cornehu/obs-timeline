@@ -16,7 +16,7 @@ class SourceTimelineWidget : public QFrame {
 public:
 	explicit SourceTimelineWidget(const SourceTimelineInfo &info,
 				      QWidget *parent = nullptr)
-		: QFrame(parent)
+		: QFrame(parent), m_name(info.name)
 	{
 		setFrameShape(QFrame::StyledPanel);
 

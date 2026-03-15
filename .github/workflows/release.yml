@@ -1,0 +1,275 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  # ──────────────────────────────────────────────
+  # macOS arm64 (Apple Silicon)
+  # ──────────────────────────────────────────────
+  build-macos-arm64:
+    name: macOS arm64
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install cmake qt@6 simde
+
+      - name: Setup OBS headers + obsconfig.h
+        run: |
+          git clone --depth=1 --branch 32.0.0 \
+            https://github.com/obsproject/obs-studio.git ~/obs-studio
+          SIMDE_INC=$(brew --prefix simde)/include
+          mkdir -p /opt/homebrew/lib/cmake/SIMDe
+          printf 'add_library(SIMDe::SIMDe INTERFACE IMPORTED)\ntarget_include_directories(SIMDe::SIMDe INTERFACE %s)\n' "$SIMDE_INC" \
+            > /opt/homebrew/lib/cmake/SIMDe/SIMDeConfig.cmake
+          cmake -S ~/obs-studio -B ~/obs-studio/build \
+            -G Xcode -DENABLE_BROWSER=OFF -DENABLE_SCRIPTING=OFF \
+            -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF \
+            -DSIMDe_DIR="/opt/homebrew/lib/cmake/SIMDe" \
+            --no-warn-unused-cli -Wno-dev > /dev/null 2>&1 || true
+
+      - name: Download OBS arm64 frameworks
+        run: |
+          # Télécharge l'installeur OBS macOS (contient les frameworks arm64)
+          curl -L -o obs.dmg \
+            "https://github.com/obsproject/obs-studio/releases/download/32.0.0/obs-studio-32.0.0-macos-arm64.dmg"
+          hdiutil attach obs.dmg -mountpoint /Volumes/OBS -nobrowse -quiet
+          mkdir -p ~/obs-frameworks
+          cp -R "/Volumes/OBS/OBS.app/Contents/Frameworks" ~/obs-frameworks/arm64
+          hdiutil detach /Volumes/OBS -quiet
+
+      - name: Build (arm64)
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DOBS_SOURCE_DIR="$HOME/obs-studio" \
+            -DOBS_APP="/Volumes/OBS/OBS.app" \
+            -DCMAKE_OSX_ARCHITECTURES="arm64" \
+            -Wno-dev \
+            -DCMAKE_EXE_LINKER_FLAGS="-F$HOME/obs-frameworks/arm64" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-F$HOME/obs-frameworks/arm64"
+          # Patch CMake cache to use downloaded frameworks
+          sed -i '' "s|/Applications/OBS.app/Contents/Frameworks|$HOME/obs-frameworks/arm64|g" build/CMakeCache.txt
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DOBS_SOURCE_DIR="$HOME/obs-studio" \
+            -DOBS_APP="$HOME/obs-frameworks" \
+            -DCMAKE_OSX_ARCHITECTURES="arm64" \
+            -Wno-dev
+          cmake --build build --parallel
+
+      - name: Upload arm64 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-bin
+          path: build/obs-timeline-monitor
+
+  # ──────────────────────────────────────────────
+  # macOS x86_64 (Intel)
+  # ──────────────────────────────────────────────
+  build-macos-x86_64:
+    name: macOS x86_64
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install cmake qt@6 simde
+
+      - name: Setup OBS headers + obsconfig.h
+        run: |
+          git clone --depth=1 --branch 32.0.0 \
+            https://github.com/obsproject/obs-studio.git ~/obs-studio
+          SIMDE_INC=$(brew --prefix simde)/include
+          mkdir -p /usr/local/lib/cmake/SIMDe
+          printf 'add_library(SIMDe::SIMDe INTERFACE IMPORTED)\ntarget_include_directories(SIMDe::SIMDe INTERFACE %s)\n' "$SIMDE_INC" \
+            > /usr/local/lib/cmake/SIMDe/SIMDeConfig.cmake
+          cmake -S ~/obs-studio -B ~/obs-studio/build \
+            -G Xcode -DENABLE_BROWSER=OFF -DENABLE_SCRIPTING=OFF \
+            -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF \
+            -DSIMDe_DIR="/usr/local/lib/cmake/SIMDe" \
+            --no-warn-unused-cli -Wno-dev > /dev/null 2>&1 || true
+
+      - name: Download OBS x86_64 frameworks
+        run: |
+          curl -L -o obs.dmg \
+            "https://github.com/obsproject/obs-studio/releases/download/32.0.0/obs-studio-32.0.0-macos-x86_64.dmg"
+          hdiutil attach obs.dmg -mountpoint /Volumes/OBS -nobrowse -quiet
+          mkdir -p ~/obs-frameworks
+          cp -R "/Volumes/OBS/OBS.app/Contents/Frameworks" ~/obs-frameworks/x86_64
+          hdiutil detach /Volumes/OBS -quiet
+
+      - name: Build (x86_64)
+        run: |
+          OBS_FW="$HOME/obs-frameworks/x86_64"
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DOBS_SOURCE_DIR="$HOME/obs-studio" \
+            -DCMAKE_OSX_ARCHITECTURES="x86_64" \
+            -Wno-dev
+          # Patch le cache pour pointer vers les frameworks x86_64 téléchargés
+          sed -i '' "s|/Applications/OBS.app/Contents/Frameworks|$OBS_FW|g" build/CMakeCache.txt
+          cmake --build build --parallel
+
+      - name: Upload x86_64 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-x86_64-bin
+          path: build/obs-timeline-monitor
+
+  # ──────────────────────────────────────────────
+  # macOS — assemble le bundle universel avec lipo
+  # ──────────────────────────────────────────────
+  package-macos:
+    name: macOS universal bundle
+    needs: [build-macos-arm64, build-macos-x86_64]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-arm64-bin
+          path: bin-arm64
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-x86_64-bin
+          path: bin-x86_64
+
+      - name: Create universal binary + .plugin bundle
+        run: |
+          PLUGIN="obs-timeline-monitor"
+          BUNDLE="$PLUGIN.plugin"
+
+          # Fusionner arm64 + x86_64
+          lipo -create \
+            "bin-arm64/$PLUGIN" \
+            "bin-x86_64/$PLUGIN" \
+            -output "$PLUGIN"
+
+          # Vérifier
+          lipo -info "$PLUGIN"
+
+          # Créer le bundle
+          mkdir -p "$BUNDLE/Contents/MacOS"
+          mkdir -p "$BUNDLE/Contents/Resources/locale"
+          cp "$PLUGIN" "$BUNDLE/Contents/MacOS/$PLUGIN"
+          cp data/locale/*.ini "$BUNDLE/Contents/Resources/locale/"
+          cat > "$BUNDLE/Contents/Info.plist" << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleExecutable</key>   <string>$PLUGIN</string>
+            <key>CFBundleIdentifier</key>   <string>com.yourname.$PLUGIN</string>
+            <key>CFBundleName</key>         <string>$PLUGIN</string>
+            <key>CFBundleVersion</key>      <string>${GITHUB_REF_NAME#v}</string>
+          </dict></plist>
+          EOF
+          codesign --force --deep --sign - "$BUNDLE"
+          zip -r "obs-timeline-monitor-macos.zip" "$BUNDLE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: obs-timeline-monitor-macos.zip
+
+  # ──────────────────────────────────────────────
+  # Windows
+  # ──────────────────────────────────────────────
+  build-windows:
+    name: Windows (64-bit)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download OBS dev package
+        run: |
+          $url = "https://github.com/obsproject/obs-studio/releases/download/32.0.0/OBS-Studio-32.0.0-Windows.zip"
+          Invoke-WebRequest -Uri $url -OutFile obs.zip
+          Expand-Archive obs.zip -DestinationPath C:\obs-studio
+        shell: pwsh
+
+      - uses: jurplel/install-qt-action@v3
+        with:
+          version: "6.5.*"
+          arch: win64_msvc2019_64
+
+      - name: Configure
+        run: |
+          cmake -S . -B build `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_PREFIX_PATH="C:\obs-studio\cmake;$env:Qt6_DIR"
+        shell: pwsh
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+        shell: pwsh
+
+      - name: Package
+        run: |
+          New-Item -ItemType Directory -Path dist\obs-plugins\64bit -Force
+          New-Item -ItemType Directory -Path dist\data\obs-plugins\obs-timeline-monitor -Force
+          Copy-Item build\Release\obs-timeline-monitor.dll dist\obs-plugins\64bit\
+          Copy-Item -Recurse data\locale dist\data\obs-plugins\obs-timeline-monitor\
+          Compress-Archive -Path dist\* -DestinationPath obs-timeline-monitor-windows.zip
+        shell: pwsh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: obs-timeline-monitor-windows.zip
+
+  # ──────────────────────────────────────────────
+  # Linux (Ubuntu 22.04)
+  # ──────────────────────────────────────────────
+  build-linux:
+    name: Linux (Ubuntu)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake qt6-base-dev libobs-dev
+
+      - name: Build & install
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=dist
+          cmake --build build --parallel
+          cmake --install build
+
+      - name: Package
+        run: tar -czf obs-timeline-monitor-linux.tar.gz -C dist .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: obs-timeline-monitor-linux.tar.gz
+
+  # ──────────────────────────────────────────────
+  # GitHub Release
+  # ──────────────────────────────────────────────
+  release:
+    name: Publish Release
+    needs: [package-macos, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            obs-timeline-monitor-macos.zip
+            obs-timeline-monitor-windows.zip
+            obs-timeline-monitor-linux.tar.gz
+          generate_release_notes: true

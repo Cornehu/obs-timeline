@@ -55,33 +55,17 @@ static void enum_scene_items(obs_scene_t *scene, EnumContext *ctx)
 			if (!SourceMonitor::sourceHasTimeline(source))
 				return true;
 
-			// Get media duration and position via proc_handler
-			proc_handler_t *ph = obs_source_get_proc_handler(source);
-			if (!ph)
-				return true;
-
-			calldata_t cd = {};
-
-			// get_duration
-			calldata_init(&cd);
-			proc_handler_call(ph, "get_duration", &cd);
-			int64_t total = calldata_int(&cd, "duration");
-			calldata_free(&cd);
-
+			// Get media duration and position (values in milliseconds)
+			int64_t total   = obs_source_media_get_duration(source);
 			if (total <= 0)
 				return true; // no defined duration, skip
 
-			// get_time (current position)
-			calldata_init(&cd);
-			proc_handler_call(ph, "get_time", &cd);
-			int64_t elapsed = calldata_int(&cd, "time");
-			calldata_free(&cd);
+			int64_t elapsed = obs_source_media_get_time(source);
 
-			// OBS returns nanoseconds — convert to ms
 			SourceTimelineInfo info;
 			info.name    = obs_source_get_name(source);
-			info.total   = total   / 1000000LL;
-			info.elapsed = elapsed / 1000000LL;
+			info.total   = total;
+			info.elapsed = elapsed;
 
 			ctx->results.push_back(info);
 			return true;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <obs-module.h>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -15,6 +16,5 @@ public:
 	// Returns timeline info for all active PGM sources that have a defined duration
 	static std::vector<SourceTimelineInfo> getActiveTimelines();
 
-private:
 	static bool sourceHasTimeline(obs_source_t *source);
 };
