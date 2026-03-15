@@ -1,0 +1,31 @@
+# Build directories
+build/
+build-*/
+.build/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!cmake/ObsPluginHelpers.cmake
+
+# Compiled output
+*.so
+*.dylib
+*.dll
+*.o
+*.obj
+
+# IDE
+.vscode/
+.idea/
+*.user
+*.suo
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
