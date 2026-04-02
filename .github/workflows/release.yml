@@ -6,9 +6,6 @@ on:
       - "v*"
 
 jobs:
-  # ──────────────────────────────────────────────
-  # macOS arm64
-  # ──────────────────────────────────────────────
   build-macos:
     name: macOS (arm64)
     runs-on: macos-14
@@ -23,13 +20,11 @@ jobs:
           git clone --depth=1 --branch 32.0.0 \
             https://github.com/obsproject/obs-studio.git ~/obs-studio
 
-          # Créer le stub SIMDe pour que cmake OBS ne bloque pas
           SIMDE_INC=$(brew --prefix simde)/include
           mkdir -p ~/cmake/SIMDe
           printf 'add_library(SIMDe::SIMDe INTERFACE IMPORTED)\ntarget_include_directories(SIMDe::SIMDe INTERFACE %s)\n' \
             "$SIMDE_INC" > ~/cmake/SIMDe/SIMDeConfig.cmake
 
-          # Configure OBS — génère obsconfig.h
           cmake -S ~/obs-studio -B ~/obs-studio/build \
             -G Xcode \
             -DENABLE_BROWSER=OFF -DENABLE_SCRIPTING=OFF \
@@ -37,17 +32,14 @@ jobs:
             -DSIMDe_DIR="$HOME/cmake/SIMDe" \
             --no-warn-unused-cli -Wno-dev 2>&1 | tail -5 || true
 
-          # Trouver obsconfig.h et exposer son dossier
           OBSCONFIG=$(find ~/obs-studio/build -name "obsconfig.h" 2>/dev/null | head -1)
           if [ -z "$OBSCONFIG" ]; then
-            echo "obsconfig.h introuvable — génération minimale"
             mkdir -p ~/obs-studio/build/config
             printf '#pragma once\n#define OBS_RELEASE_CANDIDATE 0\n#define OBS_BETA 0\n' \
               > ~/obs-studio/build/config/obsconfig.h
             OBSCONFIG="$HOME/obs-studio/build/config/obsconfig.h"
           fi
           echo "OBS_CONFIG_DIR=$(dirname $OBSCONFIG)" >> $GITHUB_ENV
-          echo "obsconfig.h trouvé : $OBSCONFIG"
 
       - name: Download OBS arm64 frameworks
         run: |
@@ -69,13 +61,12 @@ jobs:
             -Wno-dev
           cmake --build build --parallel
 
-      - name: Créer le bundle .plugin
+      - name: Create .plugin bundle
         run: |
           PLUGIN=obs-timeline-monitor
           BUNDLE="$PLUGIN.plugin"
           BIN="build/$PLUGIN"
 
-          # Fix Qt @rpath
           for LIB in QtCore QtGui QtWidgets; do
             OLD=$(otool -L "$BIN" 2>/dev/null | grep "opt/homebrew.*$LIB" | awk '{print $1}')
             [ -n "$OLD" ] && install_name_tool -change "$OLD" \
@@ -92,152 +83,10 @@ jobs:
           codesign --force --deep --sign - "$BUNDLE"
           zip -r obs-timeline-monitor-macos-arm64.zip "$BUNDLE"
 
-      - uses: actions/upload-artifact@v4
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: macos
-          path: obs-timeline-monitor-macos-arm64.zip
-
-  # ──────────────────────────────────────────────
-  # Windows 64-bit
-  # ──────────────────────────────────────────────
-  build-windows:
-    name: Windows (64-bit)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Clone OBS 32.0.0 + build libobs et obs-frontend-api
-        run: |
-          git clone --depth 1 --branch 32.0.0 `
-            https://github.com/obsproject/obs-studio.git C:\obs-source
-
-          # Stubs cmake pour les dépendances transitives d'OBS qu'on n'utilise pas
-          foreach ($dep in @("w32-pthreads", "SIMDe", "ZLIB", "zlib")) {
-            $dir = "C:\cmake-stubs\$dep"
-            New-Item -ItemType Directory -Force $dir | Out-Null
-            Set-Content "$dir\${dep}Config.cmake" "add_library($dep INTERFACE IMPORTED)"
-          }
-
-          cmake -S C:\obs-source -B C:\obs-source\build `
-            -DENABLE_BROWSER=OFF -DENABLE_SCRIPTING=OFF `
-            -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF `
-            -Dw32-pthreads_DIR="C:\cmake-stubs\w32-pthreads" `
-            -DSIMDe_DIR="C:\cmake-stubs\SIMDe" `
-            --no-warn-unused-cli -Wno-dev 2>&1 | Select-Object -Last 5
-
-          cmake --build C:\obs-source\build `
-            --target libobs obs-frontend-api `
-            --config Release --parallel
-        shell: pwsh
-
-      - uses: jurplel/install-qt-action@v4
-        with:
-          version: "6.5.*"
-          arch: win64_msvc2019_64
-
-      - name: Configure plugin
-        run: |
-          $LIBOBS = (Get-ChildItem C:\obs-source\build -Filter "libobsConfig.cmake" -Recurse | Select-Object -First 1).DirectoryName
-          $FRONTEND = (Get-ChildItem C:\obs-source\build -Filter "obs-frontend-apiConfig.cmake" -Recurse | Select-Object -First 1).DirectoryName
-          Write-Host "libobs_DIR: $LIBOBS"
-          Write-Host "obs-frontend-api_DIR: $FRONTEND"
-          cmake -S . -B build `
-            -DCMAKE_BUILD_TYPE=Release `
-            -Dlibobs_DIR="$LIBOBS" `
-            -Dobs-frontend-api_DIR="$FRONTEND" `
-            -Dw32-pthreads_DIR="C:\cmake-stubs\w32-pthreads" `
-            -DSIMDe_DIR="C:\cmake-stubs\SIMDe" `
-            -Wno-dev
-        shell: pwsh
-
-      - name: Build plugin
-        run: cmake --build build --config Release --parallel
-        shell: pwsh
-
-      - name: Package
-        run: |
-          New-Item -ItemType Directory -Force dist\obs-plugins\64bit
-          New-Item -ItemType Directory -Force dist\data\obs-plugins\obs-timeline-monitor
-          Copy-Item build\Release\obs-timeline-monitor.dll dist\obs-plugins\64bit\
-          Copy-Item -Recurse data\locale dist\data\obs-plugins\obs-timeline-monitor\
-          Compress-Archive -Path dist\* -DestinationPath obs-timeline-monitor-windows.zip
-        shell: pwsh
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows
-          path: obs-timeline-monitor-windows.zip
-
-  # ──────────────────────────────────────────────
-  # Linux Ubuntu 22.04
-  # ──────────────────────────────────────────────
-  build-linux:
-    name: Linux (Ubuntu)
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Installer OBS + Qt6
-        run: |
-          sudo add-apt-repository ppa:obsproject/obs-studio -y
-          sudo apt-get update
-          sudo apt-get install -y cmake qt6-base-dev libobs-dev obs-studio
-
-      - name: Clone OBS 32.0.0 source (headers + obsconfig.h)
-        run: |
-          git clone --depth=1 --branch 32.0.0 \
-            https://github.com/obsproject/obs-studio.git ~/obs-studio
-
-          cmake -S ~/obs-studio -B ~/obs-studio/build \
-            -DENABLE_BROWSER=OFF -DENABLE_SCRIPTING=OFF \
-            -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF \
-            --no-warn-unused-cli -Wno-dev 2>&1 | tail -3 || true
-
-          OBSCONFIG=$(find ~/obs-studio/build -name "obsconfig.h" 2>/dev/null | head -1)
-          if [ -z "$OBSCONFIG" ]; then
-            mkdir -p ~/obs-studio/build/config
-            printf '#pragma once\n#define OBS_RELEASE_CANDIDATE 0\n#define OBS_BETA 0\n' \
-              > ~/obs-studio/build/config/obsconfig.h
-          fi
-
-      - name: Build
-        run: |
-          cmake -S . -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=dist \
-            -DOBS_SOURCE_DIR="$HOME/obs-studio" \
-            -DOBS_LIB_DIR="/usr/lib/x86_64-linux-gnu" \
-            -DOBS_CONFIG_DIR="$HOME/obs-studio/build/config" \
-            -Wno-dev
-          cmake --build build --parallel
-          cmake --install build
-
-      - name: Package
-        run: tar -czf obs-timeline-monitor-linux.tar.gz -C dist .
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: linux
-          path: obs-timeline-monitor-linux.tar.gz
-
-  # ──────────────────────────────────────────────
-  # GitHub Release
-  # ──────────────────────────────────────────────
-  release:
-    name: Publish Release
-    needs: [build-macos, build-windows, build-linux]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          merge-multiple: true
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            obs-timeline-monitor-macos-arm64.zip
-            obs-timeline-monitor-windows.zip
-            obs-timeline-monitor-linux.tar.gz
+          files: obs-timeline-monitor-macos-arm64.zip
           generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

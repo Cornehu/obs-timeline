@@ -1,93 +1,53 @@
 # OBS Timeline Monitor
 
-An OBS Studio plugin that displays a real-time progress bar and time indicator for every media source (video/audio files) in your current scene.
+Plugin OBS Studio qui affiche une barre de progression en temps réel pour chaque source média (vidéo/audio) dans la scène active.
 
-## Features
+## Téléchargement
 
-- Live progress bar for each media source in the active scene
-- Elapsed and remaining time display
-- Auto-detects media sources — no configuration needed
-- Works with nested scenes and groups
-- Supports `ffmpeg_source` (Media Source) and `vlc_source` (VLC Source)
+**[⬇ Télécharger la dernière version](../../releases/latest)**
 
-## Requirements
+| Plateforme | Statut |
+|---|---|
+| macOS (Apple Silicon) | ✅ Disponible |
+| Windows | 🔜 Bientôt |
+| Linux | 🔜 Bientôt |
 
-- OBS Studio 32.x or later
+## Fonctionnalités
 
-## Installation
+- Barre de progression live pour chaque source média dans la scène active
+- Affichage du temps écoulé et restant
+- Détection automatique des sources — aucune configuration
+- Compatible scènes imbriquées et groupes
+- Supporte `ffmpeg_source` (Source Média) et `vlc_source` (Source VLC)
 
-### macOS
+## Installation — macOS
 
-1. Download `obs-timeline-monitor-macos.zip` from the [Releases](../../releases) page
-2. Unzip and copy `obs-timeline-monitor.plugin` to the plugin folder.
-3. Restart OBS
-4. Go to **Docks → obs-timeline-monitor**
+> **Requis :** OBS Studio 32.x, Mac Apple Silicon (M1/M2/M3/M4)
 
-> **Note:** macOS may warn about an unidentified developer on first launch.  
-> Go to System Settings → Privacy & Security and click **Open Anyway**.
+1. Télécharge `obs-timeline-monitor-macos-arm64.zip` depuis les [Releases](../../releases/latest)
+2. Dézippe et copie `obs-timeline-monitor.plugin` dans :
+   ```
+   ~/Library/Application Support/obs-studio/plugins/
+   ```
+   *(crée le dossier s'il n'existe pas)*
+3. Redémarre OBS
+4. Va dans **Docks → obs-timeline-monitor**
 
-### Windows
+> Si macOS bloque l'ouverture : **Réglages Système → Confidentialité et sécurité → Ouvrir quand même**
 
-1. Download `obs-timeline-monitor-windows.zip` from the [Releases](../../releases) page
-2. Unzip and copy the contents to your OBS installation folder:
-   - `obs-plugins/64bit/obs-timeline-monitor.dll` → `C:\Program Files\obs-studio\obs-plugins\64bit\`
-   - `data/obs-plugins/obs-timeline-monitor/` → `C:\Program Files\obs-studio\data\obs-plugins\`
-3. Restart OBS
+## Compiler depuis les sources — macOS
 
-### Linux
-
-1. Download `obs-timeline-monitor-linux.tar.gz` from the [Releases](../../releases) page
-2. Extract and copy:
-   - `obs-timeline-monitor.so` → `~/.config/obs-studio/plugins/obs-timeline-monitor/bin/64bit/`
-   - `locale/` → `~/.config/obs-studio/plugins/obs-timeline-monitor/data/locale/`
-3. Restart OBS
-
----
-
-## Building from source
-
-### macOS
-
-**Requirements:** Xcode, CMake, Homebrew
+**Prérequis :** Xcode, CMake, Homebrew
 
 ```bash
-# Install dependencies
 brew install cmake qt@6 simde
-
-# Clone and build
-git clone https://github.com/yourname/obs-timeline-monitor.git
+git clone https://github.com/Cornehu/obs-timeline-monitor.git
 cd obs-timeline-monitor
 ./deploy.sh
 ```
 
-The script clones OBS Studio sources automatically, compiles the plugin, and installs it into OBS.app.
+Le script clone automatiquement les sources OBS, compile le plugin et l'installe dans OBS.
 
-### Windows
-
-**Requirements:** Visual Studio 2022, CMake, OBS Studio installed
-
-```bat
-cmake -S . -B build ^
-  -DCMAKE_PREFIX_PATH="C:\Program Files\obs-studio\cmake" ^
-  -DQt6_DIR="<path-to-qt>\lib\cmake\Qt6"
-cmake --build build --config Release
-```
-
-### Linux
-
-**Requirements:** CMake, Qt6, OBS Studio dev packages
-
-```bash
-# Ubuntu/Debian
-sudo apt install cmake qt6-base-dev libobs-dev
-
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
-sudo cmake --install build
-```
-
----
-
-## License
+## Licence
 
 MIT
