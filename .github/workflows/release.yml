@@ -69,12 +69,6 @@ jobs:
           BUNDLE="$PLUGIN.plugin"
           BIN="build/$PLUGIN"
 
-          for LIB in QtCore QtGui QtWidgets; do
-            OLD=$(otool -L "$BIN" 2>/dev/null | grep "opt/homebrew.*$LIB" | awk '{print $1}')
-            [ -n "$OLD" ] && install_name_tool -change "$OLD" \
-              "@rpath/$LIB.framework/Versions/A/$LIB" "$BIN"
-          done
-
           mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources/locale"
           cp "$BIN" "$BUNDLE/Contents/MacOS/$PLUGIN"
           cp data/locale/*.ini "$BUNDLE/Contents/Resources/locale/"

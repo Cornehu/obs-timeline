@@ -66,14 +66,8 @@ if(APPLE)
 
     # Fix Qt paths: Homebrew absolu → @rpath (Qt bundlé dans OBS)
     add_custom_command(TARGET obs-timeline-monitor POST_BUILD
-        COMMAND bash -c
-            "for LIB in QtCore QtGui QtWidgets; do \
-                OLD=$$(otool -L \"$<TARGET_FILE:obs-timeline-monitor>\" 2>/dev/null \
-                      | grep \"opt/homebrew.*$$LIB\" | awk '{print $$1}'); \
-                [ -n \"$$OLD\" ] && install_name_tool -change \"$$OLD\" \
-                    \"@rpath/$$LIB.framework/Versions/A/$$LIB\" \
-                    \"$<TARGET_FILE:obs-timeline-monitor>\"; \
-            done"
+        COMMAND bash "${CMAKE_SOURCE_DIR}/cmake/fix_qt_rpath.sh"
+                     "$<TARGET_FILE:obs-timeline-monitor>"
         COMMENT "Fixing Qt @rpath"
     )
 
