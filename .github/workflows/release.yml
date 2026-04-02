@@ -7,7 +7,7 @@ on:
 
 jobs:
   # ──────────────────────────────────────────────
-  # macOS arm64 (Apple Silicon)
+  # macOS arm64
   # ──────────────────────────────────────────────
   build-macos:
     name: macOS (arm64)
@@ -18,22 +18,36 @@ jobs:
       - name: Install dependencies
         run: brew install cmake qt@6 simde
 
-      - name: Clone OBS 32.0.0 source (headers)
+      - name: Clone OBS 32.0.0 source + générer obsconfig.h
         run: |
           git clone --depth=1 --branch 32.0.0 \
             https://github.com/obsproject/obs-studio.git ~/obs-studio
 
+          # Créer le stub SIMDe pour que cmake OBS ne bloque pas
           SIMDE_INC=$(brew --prefix simde)/include
           mkdir -p ~/cmake/SIMDe
           printf 'add_library(SIMDe::SIMDe INTERFACE IMPORTED)\ntarget_include_directories(SIMDe::SIMDe INTERFACE %s)\n' \
             "$SIMDE_INC" > ~/cmake/SIMDe/SIMDeConfig.cmake
 
+          # Configure OBS — génère obsconfig.h
           cmake -S ~/obs-studio -B ~/obs-studio/build \
             -G Xcode \
             -DENABLE_BROWSER=OFF -DENABLE_SCRIPTING=OFF \
             -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF \
             -DSIMDe_DIR="$HOME/cmake/SIMDe" \
-            --no-warn-unused-cli -Wno-dev 2>&1 | tail -3 || true
+            --no-warn-unused-cli -Wno-dev 2>&1 | tail -5 || true
+
+          # Trouver obsconfig.h et exposer son dossier
+          OBSCONFIG=$(find ~/obs-studio/build -name "obsconfig.h" 2>/dev/null | head -1)
+          if [ -z "$OBSCONFIG" ]; then
+            echo "obsconfig.h introuvable — génération minimale"
+            mkdir -p ~/obs-studio/build/config
+            printf '#pragma once\n#define OBS_RELEASE_CANDIDATE 0\n#define OBS_BETA 0\n' \
+              > ~/obs-studio/build/config/obsconfig.h
+            OBSCONFIG="$HOME/obs-studio/build/config/obsconfig.h"
+          fi
+          echo "OBS_CONFIG_DIR=$(dirname $OBSCONFIG)" >> $GITHUB_ENV
+          echo "obsconfig.h trouvé : $OBSCONFIG"
 
       - name: Download OBS arm64 frameworks
         run: |
@@ -49,37 +63,31 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DOBS_SOURCE_DIR="$HOME/obs-studio" \
             -DOBS_FRAMEWORKS="$HOME/obs-frameworks" \
+            -DOBS_CONFIG_DIR="$OBS_CONFIG_DIR" \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DQt6_DIR="$(brew --prefix qt@6)/lib/cmake/Qt6" \
             -Wno-dev
           cmake --build build --parallel
 
-      - name: Create .plugin bundle
+      - name: Créer le bundle .plugin
         run: |
           PLUGIN=obs-timeline-monitor
           BUNDLE="$PLUGIN.plugin"
           BIN="build/$PLUGIN"
 
+          # Fix Qt @rpath
           for LIB in QtCore QtGui QtWidgets; do
             OLD=$(otool -L "$BIN" 2>/dev/null | grep "opt/homebrew.*$LIB" | awk '{print $1}')
             [ -n "$OLD" ] && install_name_tool -change "$OLD" \
               "@rpath/$LIB.framework/Versions/A/$LIB" "$BIN"
           done
 
-          mkdir -p "$BUNDLE/Contents/MacOS"
-          mkdir -p "$BUNDLE/Contents/Resources/locale"
+          mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources/locale"
           cp "$BIN" "$BUNDLE/Contents/MacOS/$PLUGIN"
           cp data/locale/*.ini "$BUNDLE/Contents/Resources/locale/"
 
-          cat > "$BUNDLE/Contents/Info.plist" << EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0"><dict>
-            <key>CFBundleExecutable</key><string>$PLUGIN</string>
-            <key>CFBundleIdentifier</key><string>com.cornehu.$PLUGIN</string>
-            <key>CFBundleName</key><string>$PLUGIN</string>
-            <key>CFBundleVersion</key><string>${GITHUB_REF_NAME#v}</string>
-          </dict></plist>
-          EOF
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed "s/@VERSION@/$VERSION/" data/macos/Info.plist > "$BUNDLE/Contents/Info.plist"
 
           codesign --force --deep --sign - "$BUNDLE"
           zip -r obs-timeline-monitor-macos-arm64.zip "$BUNDLE"
@@ -90,7 +98,7 @@ jobs:
           path: obs-timeline-monitor-macos-arm64.zip
 
   # ──────────────────────────────────────────────
-  # Windows (64-bit)
+  # Windows 64-bit
   # ──────────────────────────────────────────────
   build-windows:
     name: Windows (64-bit)
@@ -98,14 +106,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Clone OBS 32.0.0 source + build libobs only
+      - name: Clone OBS 32.0.0 + build libobs et obs-frontend-api
         run: |
           git clone --depth 1 --branch 32.0.0 `
             https://github.com/obsproject/obs-studio.git C:\obs-source
+
+          # Stubs cmake pour les dépendances transitives d'OBS qu'on n'utilise pas
+          foreach ($dep in @("w32-pthreads", "SIMDe", "ZLIB", "zlib")) {
+            $dir = "C:\cmake-stubs\$dep"
+            New-Item -ItemType Directory -Force $dir | Out-Null
+            Set-Content "$dir\${dep}Config.cmake" "add_library($dep INTERFACE IMPORTED)"
+          }
+
           cmake -S C:\obs-source -B C:\obs-source\build `
             -DENABLE_BROWSER=OFF -DENABLE_SCRIPTING=OFF `
             -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF `
-            --no-warn-unused-cli -Wno-dev
+            -Dw32-pthreads_DIR="C:\cmake-stubs\w32-pthreads" `
+            -DSIMDe_DIR="C:\cmake-stubs\SIMDe" `
+            --no-warn-unused-cli -Wno-dev 2>&1 | Select-Object -Last 5
+
           cmake --build C:\obs-source\build `
             --target libobs obs-frontend-api `
             --config Release --parallel
@@ -115,17 +134,6 @@ jobs:
         with:
           version: "6.5.*"
           arch: win64_msvc2019_64
-
-      - name: Create stubs for Windows-only OBS deps (w32-pthreads, etc.)
-        run: |
-          # Ces dépendances sont listées dans libobsConfig.cmake mais pas nécessaires
-          # pour notre plugin — on crée des stubs cmake pour satisfaire find_dependency()
-          foreach ($dep in @("w32-pthreads", "zlib", "ZLIB")) {
-            $dir = "C:\cmake\$dep"
-            New-Item -ItemType Directory -Force $dir | Out-Null
-            Set-Content "$dir\${dep}Config.cmake" "# stub`nadd_library($dep INTERFACE IMPORTED)"
-          }
-        shell: pwsh
 
       - name: Configure plugin
         run: |
@@ -137,8 +145,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -Dlibobs_DIR="$LIBOBS" `
             -Dobs-frontend-api_DIR="$FRONTEND" `
-            -Dw32-pthreads_DIR="C:\cmake\w32-pthreads" `
-            -DZLIB_DIR="C:\cmake\zlib" `
+            -Dw32-pthreads_DIR="C:\cmake-stubs\w32-pthreads" `
+            -DSIMDe_DIR="C:\cmake-stubs\SIMDe" `
             -Wno-dev
         shell: pwsh
 
@@ -148,8 +156,8 @@ jobs:
 
       - name: Package
         run: |
-          New-Item -ItemType Directory -Force -Path dist\obs-plugins\64bit
-          New-Item -ItemType Directory -Force -Path dist\data\obs-plugins\obs-timeline-monitor
+          New-Item -ItemType Directory -Force dist\obs-plugins\64bit
+          New-Item -ItemType Directory -Force dist\data\obs-plugins\obs-timeline-monitor
           Copy-Item build\Release\obs-timeline-monitor.dll dist\obs-plugins\64bit\
           Copy-Item -Recurse data\locale dist\data\obs-plugins\obs-timeline-monitor\
           Compress-Archive -Path dist\* -DestinationPath obs-timeline-monitor-windows.zip
@@ -161,7 +169,7 @@ jobs:
           path: obs-timeline-monitor-windows.zip
 
   # ──────────────────────────────────────────────
-  # Linux (Ubuntu 22.04)
+  # Linux Ubuntu 22.04
   # ──────────────────────────────────────────────
   build-linux:
     name: Linux (Ubuntu)
@@ -169,30 +177,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install OBS dev headers (via PPA)
+      - name: Installer OBS + Qt6
         run: |
           sudo add-apt-repository ppa:obsproject/obs-studio -y
           sudo apt-get update
-          sudo apt-get install -y cmake qt6-base-dev libobs-dev
+          sudo apt-get install -y cmake qt6-base-dev libobs-dev obs-studio
 
-      - name: Find libobs cmake config path
+      - name: Clone OBS 32.0.0 source (headers + obsconfig.h)
         run: |
-          echo "=== Fichiers cmake de libobs-dev ==="
-          dpkg -L libobs-dev 2>/dev/null | grep -i cmake || true
-          LIBOBS_DIR=$(find /usr -name "libobsConfig.cmake" 2>/dev/null | head -1 | xargs -r dirname)
-          FRONTEND_DIR=$(find /usr -name "obs-frontend-apiConfig.cmake" 2>/dev/null | head -1 | xargs -r dirname)
-          echo "LIBOBS_DIR=${LIBOBS_DIR:-not_found}"
-          echo "FRONTEND_DIR=${FRONTEND_DIR:-not_found}"
-          echo "LIBOBS_DIR=$LIBOBS_DIR" >> $GITHUB_ENV
-          echo "FRONTEND_DIR=$FRONTEND_DIR" >> $GITHUB_ENV
+          git clone --depth=1 --branch 32.0.0 \
+            https://github.com/obsproject/obs-studio.git ~/obs-studio
+
+          cmake -S ~/obs-studio -B ~/obs-studio/build \
+            -DENABLE_BROWSER=OFF -DENABLE_SCRIPTING=OFF \
+            -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF \
+            --no-warn-unused-cli -Wno-dev 2>&1 | tail -3 || true
+
+          OBSCONFIG=$(find ~/obs-studio/build -name "obsconfig.h" 2>/dev/null | head -1)
+          if [ -z "$OBSCONFIG" ]; then
+            mkdir -p ~/obs-studio/build/config
+            printf '#pragma once\n#define OBS_RELEASE_CANDIDATE 0\n#define OBS_BETA 0\n' \
+              > ~/obs-studio/build/config/obsconfig.h
+          fi
 
       - name: Build
         run: |
-          EXTRA="-DCMAKE_PREFIX_PATH=/usr;/usr/lib/x86_64-linux-gnu"
-          [ -n "$LIBOBS_DIR" ] && EXTRA="$EXTRA -Dlibobs_DIR=$LIBOBS_DIR"
-          [ -n "$FRONTEND_DIR" ] && EXTRA="$EXTRA -Dobs-frontend-api_DIR=$FRONTEND_DIR"
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=dist $EXTRA
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=dist \
+            -DOBS_SOURCE_DIR="$HOME/obs-studio" \
+            -DOBS_LIB_DIR="/usr/lib/x86_64-linux-gnu" \
+            -DOBS_CONFIG_DIR="$HOME/obs-studio/build/config" \
+            -Wno-dev
           cmake --build build --parallel
           cmake --install build
 
