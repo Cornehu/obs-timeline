@@ -26,7 +26,8 @@ add_library(obs-timeline-monitor MODULE ${PLUGIN_SOURCES} ${PLUGIN_HEADERS})
 if(APPLE)
     set(OBS_APP "/Applications/OBS.app" CACHE PATH "Path to OBS.app")
     set(OBS_SOURCE_DIR "$ENV{HOME}/obs-studio" CACHE PATH "OBS Studio source (for headers)")
-    set(OBS_FRAMEWORKS "${OBS_APP}/Contents/Frameworks")
+    # OBS_FRAMEWORKS peut être passé directement en CI (ex: frameworks téléchargés depuis le DMG)
+    set(OBS_FRAMEWORKS "${OBS_APP}/Contents/Frameworks" CACHE PATH "OBS frameworks directory")
 
     find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
 
