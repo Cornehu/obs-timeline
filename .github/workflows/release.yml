@@ -51,6 +51,7 @@ jobs:
 
       - name: Build
         run: |
+          SIMDE_INC=$(brew --prefix simde)/include
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DOBS_SOURCE_DIR="$HOME/obs-studio" \
@@ -58,6 +59,7 @@ jobs:
             -DOBS_CONFIG_DIR="$OBS_CONFIG_DIR" \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DQt6_DIR="$(brew --prefix qt@6)/lib/cmake/Qt6" \
+            -DCMAKE_CXX_FLAGS="-I$SIMDE_INC" \
             -Wno-dev
           cmake --build build --parallel
 
