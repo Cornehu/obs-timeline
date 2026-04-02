@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: brew install cmake simde
 
-      - name: Clone OBS 32.0.0 source (headers only)
+      - name: Clone OBS 32.0.0 source (headers)
         run: |
           git clone --depth=1 --branch 32.0.0 \
             https://github.com/obsproject/obs-studio.git ~/obs-studio
@@ -38,7 +38,7 @@ jobs:
       - name: Download OBS arm64 frameworks
         run: |
           curl -L -o obs.dmg \
-            "https://github.com/obsproject/obs-studio/releases/download/32.0.0/obs-studio-32.0.0-macos-arm64.dmg"
+            "https://github.com/obsproject/obs-studio/releases/download/32.0.0/OBS-Studio-32.0.0-macOS-Apple.dmg"
           hdiutil attach obs.dmg -mountpoint /Volumes/OBS -nobrowse -quiet
           cp -R /Volumes/OBS/OBS.app/Contents/Frameworks ~/obs-frameworks
           hdiutil detach /Volumes/OBS -quiet
@@ -59,7 +59,6 @@ jobs:
           BUNDLE="$PLUGIN.plugin"
           BIN="build/$PLUGIN"
 
-          # Fix Qt @rpath (Homebrew → OBS bundled Qt)
           for LIB in QtCore QtGui QtWidgets; do
             OLD=$(otool -L "$BIN" 2>/dev/null | grep "opt/homebrew.*$LIB" | awk '{print $1}')
             [ -n "$OLD" ] && install_name_tool -change "$OLD" \
@@ -99,30 +98,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Clone OBS 32.0.0 source (headers + cmake targets)
+      - name: Clone OBS 32.0.0 source + build libobs only
         run: |
           git clone --depth 1 --branch 32.0.0 `
             https://github.com/obsproject/obs-studio.git C:\obs-source
           cmake -S C:\obs-source -B C:\obs-source\build `
             -DENABLE_BROWSER=OFF -DENABLE_SCRIPTING=OFF `
             -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF `
-            --no-warn-unused-cli -Wno-dev 2>&1 | Select-Object -Last 5
-        shell: pwsh
-
-      - name: Download OBS Windows libraries
-        run: |
-          $url = "https://github.com/obsproject/obs-studio/releases/download/32.0.0/OBS-Studio-32.0.0-Windows.zip"
-          Invoke-WebRequest -Uri $url -OutFile obs.zip
-          Expand-Archive obs.zip -DestinationPath C:\obs-install
-          # Copier les .lib dans le dossier build pour que cmake les trouve
-          $buildLib = "C:\obs-source\build\libobs"
-          $buildFrontend = "C:\obs-source\build\UI\obs-frontend-api"
-          New-Item -ItemType Directory -Force -Path $buildLib | Out-Null
-          New-Item -ItemType Directory -Force -Path $buildFrontend | Out-Null
-          Get-ChildItem -Path C:\obs-install -Filter "*.lib" -Recurse | ForEach-Object {
-            Copy-Item $_.FullName C:\obs-source\build\libobs\ -ErrorAction SilentlyContinue
-            Copy-Item $_.FullName C:\obs-source\build\UI\obs-frontend-api\ -ErrorAction SilentlyContinue
-          }
+            --no-warn-unused-cli -Wno-dev
+          cmake --build C:\obs-source\build `
+            --target libobs obs-frontend-api `
+            --config Release --parallel
         shell: pwsh
 
       - uses: jurplel/install-qt-action@v4
@@ -130,12 +116,10 @@ jobs:
           version: "6.5.*"
           arch: win64_msvc2019_64
 
-      - name: Configure
+      - name: Configure plugin
         run: |
-          $LIBOBS = (Get-ChildItem -Path C:\obs-source\build -Filter "libobsConfig.cmake" -Recurse | Select-Object -First 1).DirectoryName
-          $FRONTEND = (Get-ChildItem -Path C:\obs-source\build -Filter "obs-frontend-apiConfig.cmake" -Recurse | Select-Object -First 1).DirectoryName
-          Write-Host "libobs_DIR: $LIBOBS"
-          Write-Host "obs-frontend-api_DIR: $FRONTEND"
+          $LIBOBS = (Get-ChildItem C:\obs-source\build -Filter "libobsConfig.cmake" -Recurse | Select-Object -First 1).DirectoryName
+          $FRONTEND = (Get-ChildItem C:\obs-source\build -Filter "obs-frontend-apiConfig.cmake" -Recurse | Select-Object -First 1).DirectoryName
           cmake -S . -B build `
             -DCMAKE_BUILD_TYPE=Release `
             -Dlibobs_DIR="$LIBOBS" `
@@ -143,7 +127,7 @@ jobs:
             -Wno-dev
         shell: pwsh
 
-      - name: Build
+      - name: Build plugin
         run: cmake --build build --config Release --parallel
         shell: pwsh
 
@@ -176,9 +160,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake qt6-base-dev libobs-dev
 
+      - name: Find libobs cmake config path
+        run: |
+          LIBOBS_DIR=$(find /usr -name "libobsConfig.cmake" 2>/dev/null | head -1 | xargs dirname)
+          FRONTEND_DIR=$(find /usr -name "obs-frontend-apiConfig.cmake" 2>/dev/null | head -1 | xargs dirname)
+          echo "LIBOBS_DIR=$LIBOBS_DIR" >> $GITHUB_ENV
+          echo "FRONTEND_DIR=$FRONTEND_DIR" >> $GITHUB_ENV
+          echo "libobs cmake: $LIBOBS_DIR"
+          echo "frontend cmake: $FRONTEND_DIR"
+
       - name: Build
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=dist
+          EXTRA=""
+          [ -n "$LIBOBS_DIR" ] && EXTRA="$EXTRA -Dlibobs_DIR=$LIBOBS_DIR"
+          [ -n "$FRONTEND_DIR" ] && EXTRA="$EXTRA -Dobs-frontend-api_DIR=$FRONTEND_DIR"
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=dist $EXTRA
           cmake --build build --parallel
           cmake --install build
 
