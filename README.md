@@ -19,11 +19,7 @@ An OBS Studio plugin that displays a real-time progress bar and time indicator f
 ### macOS
 
 1. Download `obs-timeline-monitor-macos.zip` from the [Releases](../../releases) page
-2. Unzip and copy `obs-timeline-monitor.plugin` to:
-   ```
-   ~/Library/Application Support/obs-studio/plugins/
-   ```
-   (Create the folder if it doesn't exist)
+2. Unzip and copy `obs-timeline-monitor.plugin` to the plugin folder.
 3. Restart OBS
 4. Go to **Docks → obs-timeline-monitor**
 

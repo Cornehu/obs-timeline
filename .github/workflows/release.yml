@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: brew install cmake simde
+        run: brew install cmake qt@6 simde
 
       - name: Clone OBS 32.0.0 source (headers)
         run: |
@@ -116,14 +116,29 @@ jobs:
           version: "6.5.*"
           arch: win64_msvc2019_64
 
+      - name: Create stubs for Windows-only OBS deps (w32-pthreads, etc.)
+        run: |
+          # Ces dépendances sont listées dans libobsConfig.cmake mais pas nécessaires
+          # pour notre plugin — on crée des stubs cmake pour satisfaire find_dependency()
+          foreach ($dep in @("w32-pthreads", "zlib", "ZLIB")) {
+            $dir = "C:\cmake\$dep"
+            New-Item -ItemType Directory -Force $dir | Out-Null
+            Set-Content "$dir\${dep}Config.cmake" "# stub`nadd_library($dep INTERFACE IMPORTED)"
+          }
+        shell: pwsh
+
       - name: Configure plugin
         run: |
           $LIBOBS = (Get-ChildItem C:\obs-source\build -Filter "libobsConfig.cmake" -Recurse | Select-Object -First 1).DirectoryName
           $FRONTEND = (Get-ChildItem C:\obs-source\build -Filter "obs-frontend-apiConfig.cmake" -Recurse | Select-Object -First 1).DirectoryName
+          Write-Host "libobs_DIR: $LIBOBS"
+          Write-Host "obs-frontend-api_DIR: $FRONTEND"
           cmake -S . -B build `
             -DCMAKE_BUILD_TYPE=Release `
             -Dlibobs_DIR="$LIBOBS" `
             -Dobs-frontend-api_DIR="$FRONTEND" `
+            -Dw32-pthreads_DIR="C:\cmake\w32-pthreads" `
+            -DZLIB_DIR="C:\cmake\zlib" `
             -Wno-dev
         shell: pwsh
 
@@ -162,16 +177,18 @@ jobs:
 
       - name: Find libobs cmake config path
         run: |
-          LIBOBS_DIR=$(find /usr -name "libobsConfig.cmake" 2>/dev/null | head -1 | xargs dirname)
-          FRONTEND_DIR=$(find /usr -name "obs-frontend-apiConfig.cmake" 2>/dev/null | head -1 | xargs dirname)
+          echo "=== Fichiers cmake de libobs-dev ==="
+          dpkg -L libobs-dev 2>/dev/null | grep -i cmake || true
+          LIBOBS_DIR=$(find /usr -name "libobsConfig.cmake" 2>/dev/null | head -1 | xargs -r dirname)
+          FRONTEND_DIR=$(find /usr -name "obs-frontend-apiConfig.cmake" 2>/dev/null | head -1 | xargs -r dirname)
+          echo "LIBOBS_DIR=${LIBOBS_DIR:-not_found}"
+          echo "FRONTEND_DIR=${FRONTEND_DIR:-not_found}"
           echo "LIBOBS_DIR=$LIBOBS_DIR" >> $GITHUB_ENV
           echo "FRONTEND_DIR=$FRONTEND_DIR" >> $GITHUB_ENV
-          echo "libobs cmake: $LIBOBS_DIR"
-          echo "frontend cmake: $FRONTEND_DIR"
 
       - name: Build
         run: |
-          EXTRA=""
+          EXTRA="-DCMAKE_PREFIX_PATH=/usr;/usr/lib/x86_64-linux-gnu"
           [ -n "$LIBOBS_DIR" ] && EXTRA="$EXTRA -Dlibobs_DIR=$LIBOBS_DIR"
           [ -n "$FRONTEND_DIR" ] && EXTRA="$EXTRA -Dobs-frontend-api_DIR=$FRONTEND_DIR"
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
