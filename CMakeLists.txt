@@ -44,6 +44,7 @@ if(APPLE)
     target_include_directories(obs-timeline-monitor PRIVATE
         src
         ${OBS_SOURCE_DIR}/libobs
+        ${OBS_SOURCE_DIR}/frontend/api
         ${OBS_SOURCE_DIR}/UI/obs-frontend-api
         ${OBS_CONFIG_DIR}
     )
